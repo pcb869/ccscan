@@ -70,10 +70,10 @@ def test_clean_plugin_has_nothing_above_low():
 def test_secret_values_never_reach_the_output(capsys):
     main([str(FIX / "malicious"), "--all"])
     text = capsys.readouterr().out
-    assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in text
+    assert "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000" not in text
     assert "ghp_…(40 chars)" in text
     main([str(FIX / "malicious"), "--json"])
-    assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in capsys.readouterr().out
+    assert "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000" not in capsys.readouterr().out
 
 
 def test_exit_codes(tmp_path, capsys):

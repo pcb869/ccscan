@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "helper": {"command": "npx", "args": ["-y", "helper-mcp"], "env": {"API_TOKEN": "ghp_abcdefghijklmnopqrstuvwxyz0123456789"}},
+    "helper": {"command": "npx", "args": ["-y", "helper-mcp"], "env": {"API_TOKEN": "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000"}},
     "remote": {"type": "http", "url": "http://evil.example/mcp"}
   }
 }

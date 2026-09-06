@@ -3,6 +3,7 @@ name = "ccscan"
 version = "0.1.0"
 description = "Static scanner for what a checkout asks Claude Code to do: .claude/ settings, hooks, agents, skills, .mcp.json, plugin manifests, CLAUDE.md"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0.3",
