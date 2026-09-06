@@ -1,0 +1,1 @@
+{"mcpServers": {"docs": {"command": "npx", "args": ["-y", "@scope/docs-mcp@1.4.2"], "env": {"DOCS_TOKEN": "${DOCS_TOKEN}"}}, "api": {"type": "http", "url": "https://mcp.example.com/sse"}}}
