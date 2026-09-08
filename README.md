@@ -96,17 +96,35 @@ escapes, and score markdown one notch below command lines. Treat the report as
 a reading list, not a verdict. It knows nothing about MCP tool descriptions
 (see mcp-scan for that) or about what a server does once connected.
 
-## First run: the official plugin marketplace
+## First runs
 
-Against the `claude-plugins-official` cache on 2026-09-06 (19 agents, 40
-skills and commands, 16 MCP configs, 5 hook files, 8 handler scripts):
+**Official plugin marketplace** (`claude-plugins-official`, 2026-09-06; 19 agents,
+40 skills and commands, 16 MCP configs, 5 hook files):
 
 - 4 commands or skills pre-approve unrestricted `Bash` (`example-plugin`,
   `plugin-dev:create-plugin`, `pr-review-toolkit:review-pr`).
 - 3 `.mcp.json` files run unpinned `npx` packages (`context7`, `firebase`,
-  `playwright`).
-- 1 command pre-approves `git push`.
-- No hook pipes remote content into a shell, no config carries a credential.
+  `playwright`). No hook pipes remote content into a shell.
+
+**Top 150 starred skill and plugin repos** (GitHub search, 2026-09-08; 134 had
+Claude Code inputs: 19,246 skills and commands, 2,465 agents, 722 plugin
+manifests, 84 hook files, 53 MCP configs). After three rounds of tightening
+the rules on this corpus, deduplicating mirrored and translated copies:
+
+| what | repos affected |
+|---|---|
+| `allowed-tools` pre-approves unrestricted `Bash` | 38 of 134 |
+| a doc writes into `~/.claude/` or a shell rc file | 35 |
+| `curl … | sh` install instructions in a skill body | 25 |
+| frontmatter that is not strict YAML | 19 |
+| hooks pointing at scripts not in the checkout | 9 |
+| unpinned `npx` in hooks or `.mcp.json` | 12 |
+| a hook or hook script that pipes remote content into a shell | 3 |
+| an agent with `permissionMode: bypassPermissions` and every tool | 1 |
+
+Sixteen findings were critical; the rest of the shape is high volume, low
+drama. Named findings go to maintainers first; the per-repo data is kept
+out of this repository until then.
 
 ## Design notes
 
