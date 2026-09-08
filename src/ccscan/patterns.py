@@ -90,7 +90,8 @@ def _not_quoted_or_described(m: re.Match[str]) -> bool:
     if len(_QUOTED_RE.findall(before)) % 2:
         return False
     return not re.search(
-        r"\b(?:reject|phrases?\s+like|such\s+as|e\.g\.|for\s+example|examples?\s+of|detect|flag|flags|block|blocks|warn|prevent)\b",
+        r"\b(?:reject|phrases?\s+like|such\s+as|e\.g\.|for\s+example|examples?\s+of|detect|flag|flags|block|blocks|warn|prevent)\b"
+        r"|\b(?:to|can|may|would|will|might|attempts?\s+to|trying\s+to|instructs?\s+\w+\s+to)\s*$",
         before,
         re.IGNORECASE,
     )
@@ -132,13 +133,21 @@ def _is_write(m: re.Match[str]) -> bool:
 _EMOJI_RE = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f]")
 
 
-def _hidden_not_emoji_joiner(m: re.Match[str]) -> bool:
-    """U+200D joins emoji sequences; flag it only between ordinary text."""
-    if m.group(0) != "\u200d":
+def _hidden_not_script_joiner(m: re.Match[str]) -> bool:
+    """Zero-width joiners and non-joiners are letters in Persian, Arabic and
+    Indic scripts and glue emoji sequences; a BOM at offset 0 is a BOM. The
+    finding is a zero-width character between ordinary ASCII text, or a bidi
+    override anywhere."""
+    ch = m.group(0)
+    if "\u202a" <= ch <= "\u202e" or "\u2066" <= ch <= "\u2069":
         return True
+    if ch == "\ufeff" and m.start() == 0:
+        return False
     before = m.string[m.start() - 1 : m.start()]
     after = m.string[m.end() : m.end() + 1]
-    return not (_EMOJI_RE.search(before) or _EMOJI_RE.search(after))
+    # Next to any non-ASCII character it is script or emoji glue; anywhere
+    # in ASCII text it has no reason to be there.
+    return not ((before and ord(before) > 127) or (after and ord(after) > 127))
 
 
 def _npm_pinned(pkg: str) -> bool:
@@ -174,7 +183,7 @@ RULES: tuple[TextRule, ...] = (
         r"|(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:python3?|node|perl|ruby|php)\b",
         *_BOTH,
         accept=_not_advice,
-        markdown="high",
+        markdown="medium",
     ),
     _rule(
         "T-EXFIL",
@@ -210,6 +219,7 @@ RULES: tuple[TextRule, ...] = (
         r"|burpcollaborator|oastify\.com|interact\.sh|\.free\.beeceptor\.com|requestcatcher\.com",
         *_BOTH,
         accept=_not_advice,
+        markdown="low",
     ),
     _rule(
         "T-SECRETS-READ",
@@ -230,10 +240,27 @@ RULES: tuple[TextRule, ...] = (
         "reads or copies a credential store",
         r"\b(?:cat|source|grep|cp|scp|tar|zip|base64|head|less|more|xxd|open|read|upload|send|post|curl|python3?|node)\b[^\n]{0,60}"
         r"(?:~/\.ssh|\$HOME/\.ssh|\.ssh/(?:id_|authorized_keys)|\bid_(?:rsa|ed25519|ecdsa)\b|~/\.aws|\.aws/credentials|~/\.gnupg"
-        r"|\.netrc\b|\.kube/config|~/\.claude\.json|\.config/gh/hosts\.yml|Library/Keychains|\.env\b(?!\.example)(?!\.local\b\s+in))"
+        r"|\.netrc\b|\.kube/config|~/\.claude\.json|\.config/gh/hosts\.yml|Library/Keychains)"
         r"|security\s+find-(?:generic|internet)-password",
         "markdown",
         accept=_not_secret_setup,
+    ),
+    _rule(
+        "T-SUDO",
+        "high",
+        "runs as root",
+        r"\bsudo\b",
+        "shell",
+        accept=_not_package_install,
+    ),
+    _rule(
+        "T-EVAL",
+        "high",
+        "executes a program's output as shell",
+        r"\beval\s+[\"']?\$\(|\beval\s+\"\$|\beval\s+\$\w",
+        *_BOTH,
+        accept=_not_advice,
+        markdown="low",
     ),
     _rule(
         "T-ENV-DUMP",
@@ -249,7 +276,6 @@ RULES: tuple[TextRule, ...] = (
         "decodes or evaluates an encoded payload",
         r"(?:base64\s+(?:-d|--decode|-D)|xxd\s+-r|openssl\s+enc\s+-d)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
         r"|(?:base64\s+(?:-d|--decode|-D)|xxd\s+-r)\b[^|\n]*\|\s*(?:python3?|node|perl|ruby|php)\b"
-        r"|\beval\s+[\"']?\$\(|\beval\s+\"\$|\beval\s+\$\w"
         r"|python3?\s+-c\s+[\"']?(?:exec|eval)\s*\(|\batob\([^)]*\)\s*\)?\s*(?:\(|;?\s*eval|;?\s*Function)"
         r"|(?:\\x[0-9a-f]{2}){4,}"
         r"|echo\s+[\"']?[A-Za-z0-9+/]{40,}={0,2}[\"']?\s*\|\s*base64",
@@ -261,11 +287,11 @@ RULES: tuple[TextRule, ...] = (
         "high",
         "destructive or privileged command",
         r"\brm\s+-[a-z]*[rf][a-z]*\s+(?:/(?:\s|$|\*)|~(?:/\*|\s|$)|\$HOME(?:/\*|\s|$)|\*|\.\.(?:\s|$))"
-        r"|\bsudo\b|chmod\s+(?:-R\s+)?[0-7]?77[0-7]?\b"
+        r"|chmod\s+(?:-R\s+)?[0-7]?77[0-7]?\b"
         r"|\bmkfs\b|\bdd\s+if=|git\s+push\b[^\n]*(?:--force\b|\s-f\b)|:\(\)\s*\{\s*:\|:&\s*\};:"
         r"|\b(?:shutdown|reboot|killall)\s+(?:-|now|\w+$)",
         *_BOTH,
-        accept=_not_package_install,
+        accept=_not_advice,
         markdown="medium",
     ),
     _rule(
@@ -308,10 +334,10 @@ RULES: tuple[TextRule, ...] = (
         r"without\s+(?:telling|informing|asking|notifying|alerting|warning|consulting)\s+(?:the\s+)?(?:user|human)"
         r"|(?:hide|conceal|keep)\s+(?:this|it|these)\s+(?:from|hidden\s+from|secret\s+from)\s+(?:the\s+)?(?:user|human)"
         r"|never\s+(?:mention|reveal|disclose)\s+(?:this|these|that\s+you|the\s+(?:skill|instructions?|prompt|rule|hook|existence))"
-        r"|new\s+system\s+prompt|\bsystem\s+prompt\s*:|\[system\]|<\s*system\s*>"
-        r"|(?:bypass|disable|override)\s+(?:all\s+|any\s+|the\s+)?(?:permission|safety|security|guardrail)s?\b"
-        r"|pretend\s+(?:that\s+)?(?:you|this)\b|you\s+are\s+now\s+(?:in\s+)?\w*\s*(?:mode|DAN)\b",
+        r"|new\s+system\s+prompt|^\s*\[system\]"
+        r"|pretend\s+(?:that\s+)?(?:you|this)\b",
         "markdown",
+        flags=re.IGNORECASE | re.MULTILINE,
         accept=_not_quoted_or_described,
     ),
     _rule(
@@ -337,7 +363,7 @@ RULES: tuple[TextRule, ...] = (
         "[​‌‍⁠﻿­⁡-⁤‪-‮⁦-⁩]",
         *_BOTH,
         flags=0,
-        accept=_hidden_not_emoji_joiner,
+        accept=_hidden_not_script_joiner,
     ),
     _rule(
         "T-HTML-COMMENT",

@@ -31,12 +31,31 @@ def split(text: str) -> Document:
     try:
         loaded = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
-        return Document(None, text[m.end() :], body_line, error=str(exc).splitlines()[0])
+        # Claude Code loads plenty of skills whose frontmatter is not strict
+        # YAML (a colon inside a description is the usual case), so fall
+        # back to key: value lines rather than lose the allowed-tools grant.
+        return Document(_lenient(raw), text[m.end() :], body_line, error=str(exc).splitlines()[0])
     if loaded is None:
         loaded = {}
     if not isinstance(loaded, dict):
         return Document(None, text[m.end() :], body_line, error="frontmatter is not a mapping")
     return Document(loaded, text[m.end() :], body_line)
+
+
+def _lenient(raw: str) -> dict[str, Any]:
+    """`key: value` lines, `- item` continuation lines, bracketed lists."""
+    out: dict[str, Any] = {}
+    key: str | None = None
+    for line in raw.splitlines():
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if m:
+            key, value = m.group(1), m.group(2).strip()
+            out[key] = value if value else []
+            continue
+        item = re.match(r"^\s+-\s+(.*)$", line)
+        if item and key is not None and isinstance(out.get(key), list):
+            out[key].append(item.group(1).strip())
+    return out
 
 
 _TOKEN_RE = re.compile(r"[^\s,()]+\([^)]*\)|[^\s,()]+")

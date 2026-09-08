@@ -562,11 +562,11 @@ class Scanner:
         doc = split(text)
         if doc.error:
             self.add(
-                "low",
+                "info",
                 "F-BAD-FRONTMATTER",
                 path,
                 1,
-                "frontmatter does not parse, Claude Code skips this file",
+                "frontmatter is not strict YAML; read leniently as key: value lines",
                 doc.error[:160],
             )
         return (doc.meta or {}), doc.body, doc.body_line
