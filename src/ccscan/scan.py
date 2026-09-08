@@ -510,6 +510,13 @@ class Scanner:
         self, command: str, file: Path, origin: Path, plugin_root: Path | None, line: int | None
     ) -> None:
         """Find the script a command points at and scan its contents once."""
+        # `node -e "<code>"` / `python -c "<code>"`: the argument is a program,
+        # and any file name inside it is that program's business, not a path.
+        if re.search(
+            r"\b(?:node|python3?|ruby|perl|php|deno|bun)\s+(?:-\S+\s+)*(?:-e|-c|--eval|-p)\s", command
+        ):
+            self.add("info", "H-INLINE-CODE", file, line, "hook runs an inline program", command[:160])
+            return
         m = self._SCRIPT_RE.search(command)
         if not m:
             return

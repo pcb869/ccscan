@@ -74,6 +74,61 @@ def _not_advice(m: re.Match[str]) -> bool:
     )
 
 
+_QUOTED_RE = re.compile("[\"'`\u201c\u201d\u2018\u2019]")
+
+
+def _not_quoted_or_described(m: re.Match[str]) -> bool:
+    """An instruction phrase inside quotes is being talked about, not given
+    (`reject phrases like "ignore previous instructions"`); so is one on a
+    line that detects, rejects or lists it as an example. The plain
+    negation words stay: "do not tell the user" IS the finding."""
+    line = _line_text(m)
+    if re.search(r"\\[sdw.+*]", line):
+        return False
+    col = m.start() - (m.string.rfind("\n", 0, m.start()) + 1)
+    before = line[:col]
+    if len(_QUOTED_RE.findall(before)) % 2:
+        return False
+    return not re.search(
+        r"\b(?:reject|phrases?\s+like|such\s+as|e\.g\.|for\s+example|examples?\s+of|detect|flag|flags|block|blocks|warn|prevent)\b",
+        before,
+        re.IGNORECASE,
+    )
+
+
+def _not_secret_setup(m: re.Match[str]) -> bool:
+    """Creating an env file from its example, or listing it in .gitignore,
+    is setup, not a read of a secret."""
+    return _not_advice(m) and not re.search(
+        r"\.env\.(?:example|sample|template)|\.gitignore|dotenv", _line_text(m), re.IGNORECASE
+    )
+
+
+def _not_package_install(m: re.Match[str]) -> bool:
+    """`sudo apt-get install x` is setup, not destruction."""
+    if not _not_advice(m):
+        return False
+    return not re.search(
+        r"\bsudo\s+(?:-\S+\s+)*(?:apt|apt-get|yum|dnf|pacman|snap|zypper|brew|pip3?|npm|npx|systemctl\s+(?:start|restart|status|stop|enable|disable)|service|tee|mkdir|chown|cp|mv|ln|install|xcode-select|softwareupdate)\b",
+        _line_text(m),
+        re.IGNORECASE,
+    )
+
+
+def _is_write(m: re.Match[str]) -> bool:
+    """A path under ~/.claude counts as persistence only when something is
+    written there; naming the directory is documentation."""
+    if not _not_advice(m):
+        return False
+    return bool(
+        re.search(
+            r"(?:>>?|\b(?:cp|mv|tee|install|write|append|echo|cat|touch|mkdir)\b)",
+            _line_text(m),
+            re.IGNORECASE,
+        )
+    )
+
+
 _EMOJI_RE = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f]")
 
 
@@ -118,6 +173,7 @@ RULES: tuple[TextRule, ...] = (
         r"|\beval\s+[\"']?\$\((?:curl|wget)"
         r"|(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:python3?|node|perl|ruby|php)\b",
         *_BOTH,
+        accept=_not_advice,
         markdown="high",
     ),
     _rule(
@@ -130,11 +186,30 @@ RULES: tuple[TextRule, ...] = (
         r"|/dev/(?:tcp|udp)/"
         r"|\b(?:scp|rsync)\b[^\n]*\s\S+@\S+:"
         r"|requests\.(?:post|put)\(|urlopen\([^)]*data=|HTTPSConnection\("
-        r"|\bfetch\([^)]*method:\s*[\"'](?:POST|PUT)"
-        r"|discord(?:app)?\.com/api/webhooks|hooks\.slack\.com|api\.telegram\.org"
+        r"|\bfetch\([^)]*method:\s*[\"'](?:POST|PUT)",
+        "shell",
+        accept=_not_advice,
+    ),
+    _rule(
+        "T-EXFIL",
+        "high",
+        "sends local files, keys or environment to a remote host",
+        r"\bcurl\b[^\n]*(?:-F\s*[\"']?\w+=@|(?:-d|--data\S*)\s*[\"']?@|-T\s|--upload-file|\$\((?:cat|env|printenv|base64|tar|security)\b|~/\.|\$HOME/\.|\.ssh|\.aws|\.env\b|\.netrc|id_rsa|\.claude\.json)"
+        r"|\bnc\b\s+(?:-\S+\s+)*[\w.-]+\s+\d{2,5}\s*<"
+        r"|/dev/(?:tcp|udp)/"
+        r"|\b(?:scp|rsync)\b[^\n]*(?:~/\.|\$HOME/\.|\.ssh|\.aws|\.env\b)[^\n]*\S+@\S+:",
+        "markdown",
+        accept=_not_advice,
+    ),
+    _rule(
+        "T-EXFIL-ENDPOINT",
+        "high",
+        "known exfiltration or callback endpoint",
+        r"discord(?:app)?\.com/api/webhooks|hooks\.slack\.com/services|api\.telegram\.org/bot"
         r"|webhook\.site|ngrok(?:-free)?\.(?:io|app)|requestbin|pipedream\.net"
-        r"|burpcollaborator|oastify\.com|interact\.sh|\.free\.beeceptor\.com",
+        r"|burpcollaborator|oastify\.com|interact\.sh|\.free\.beeceptor\.com|requestcatcher\.com",
         *_BOTH,
+        accept=_not_advice,
     ),
     _rule(
         "T-SECRETS-READ",
@@ -144,11 +219,21 @@ RULES: tuple[TextRule, ...] = (
         r"|~/\.aws|\.aws/credentials|~/\.gnupg|\.netrc\b|\.kube/config"
         r"|\.claude\.json\b|~/\.claude/(?:projects|sessions|history)|\.config/gh/hosts\.yml"
         r"|security\s+find-(?:generic|internet)-password|Library/Keychains"
-        r"|\b(?:cat|source|grep|cp|scp|tar|zip|base64|head|less|more)\s+[^\n]*\.env\b"
-        r"|\.env\.(?:local|production|prod)\b",
-        *_BOTH,
+        r"|\b(?:cat|source|grep|cp|scp|tar|zip|base64|head|less|more|xxd)\s+[^\n]*\.env\b(?!\.example)"
+        r"|\.env\.(?:local|production|prod)\b(?!\.example)",
+        "shell",
         accept=_not_advice,
-        markdown="medium",
+    ),
+    _rule(
+        "T-SECRETS-READ",
+        "medium",
+        "reads or copies a credential store",
+        r"\b(?:cat|source|grep|cp|scp|tar|zip|base64|head|less|more|xxd|open|read|upload|send|post|curl|python3?|node)\b[^\n]{0,60}"
+        r"(?:~/\.ssh|\$HOME/\.ssh|\.ssh/(?:id_|authorized_keys)|\bid_(?:rsa|ed25519|ecdsa)\b|~/\.aws|\.aws/credentials|~/\.gnupg"
+        r"|\.netrc\b|\.kube/config|~/\.claude\.json|\.config/gh/hosts\.yml|Library/Keychains|\.env\b(?!\.example)(?!\.local\b\s+in))"
+        r"|security\s+find-(?:generic|internet)-password",
+        "markdown",
+        accept=_not_secret_setup,
     ),
     _rule(
         "T-ENV-DUMP",
@@ -162,10 +247,14 @@ RULES: tuple[TextRule, ...] = (
         "T-OBFUSCATION",
         "high",
         "decodes or evaluates an encoded payload",
-        r"base64\s+(?:-d|--decode|-D)\b|\bxxd\s+-r|openssl\s+enc\s+-d|\beval\s+[\"'$(]"
-        r"|python3?\s+-c\s+[\"']?(?:exec|eval)\b|\batob\(|(?:\\x[0-9a-f]{2}){4,}"
-        r"|echo\s+[\"']?[A-Za-z0-9+/]{40,}={0,2}",
+        r"(?:base64\s+(?:-d|--decode|-D)|xxd\s+-r|openssl\s+enc\s+-d)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
+        r"|(?:base64\s+(?:-d|--decode|-D)|xxd\s+-r)\b[^|\n]*\|\s*(?:python3?|node|perl|ruby|php)\b"
+        r"|\beval\s+[\"']?\$\(|\beval\s+\"\$|\beval\s+\$\w"
+        r"|python3?\s+-c\s+[\"']?(?:exec|eval)\s*\(|\batob\([^)]*\)\s*\)?\s*(?:\(|;?\s*eval|;?\s*Function)"
+        r"|(?:\\x[0-9a-f]{2}){4,}"
+        r"|echo\s+[\"']?[A-Za-z0-9+/]{40,}={0,2}[\"']?\s*\|\s*base64",
         *_BOTH,
+        accept=_not_advice,
     ),
     _rule(
         "T-DESTRUCTIVE",
@@ -174,7 +263,18 @@ RULES: tuple[TextRule, ...] = (
         r"\brm\s+-[a-z]*[rf][a-z]*\s+(?:/(?:\s|$|\*)|~(?:/\*|\s|$)|\$HOME(?:/\*|\s|$)|\*|\.\.(?:\s|$))"
         r"|\bsudo\b|chmod\s+(?:-R\s+)?[0-7]?77[0-7]?\b"
         r"|\bmkfs\b|\bdd\s+if=|git\s+push\b[^\n]*(?:--force\b|\s-f\b)|:\(\)\s*\{\s*:\|:&\s*\};:"
-        r"|\bshutdown\b|\breboot\b|\bkillall\b",
+        r"|\b(?:shutdown|reboot|killall)\s+(?:-|now|\w+$)",
+        *_BOTH,
+        accept=_not_package_install,
+        markdown="medium",
+    ),
+    _rule(
+        "T-PERSISTENCE",
+        "high",
+        "persists beyond this session",
+        r"\bcrontab\s+(?:-|\S+\s*$)|launchctl\s+(?:load|bootstrap|submit)|LaunchAgents|LaunchDaemons|systemctl\s+enable"
+        r"|>>?\s*[\"']?~?/?[^\s\"']*\.(?:zshrc|bashrc|bash_profile|zprofile|profile)\b"
+        r"|/etc/(?:profile|hosts|sudoers|cron)|\.git/hooks/",
         *_BOTH,
         accept=_not_advice,
         markdown="medium",
@@ -182,13 +282,10 @@ RULES: tuple[TextRule, ...] = (
     _rule(
         "T-PERSISTENCE",
         "high",
-        "persists beyond this session",
-        r"\bcrontab\b|launchctl\s+(?:load|bootstrap|submit)|LaunchAgents|LaunchDaemons|systemctl\s+enable"
-        r"|>>?\s*[\"']?~?/?[^\s\"']*\.(?:zshrc|bashrc|bash_profile|zprofile|profile)\b"
-        r"|/etc/(?:profile|hosts|sudoers|cron)|~/\.claude/(?:settings\.json|CLAUDE\.md|agents|skills|hooks)"
-        r"|\$HOME/\.claude/|\.git/hooks/",
+        "writes into the user's Claude Code configuration",
+        r"~/\.claude/(?:settings\.json|CLAUDE\.md|agents|skills|hooks|commands)|\$HOME/\.claude/",
         *_BOTH,
-        accept=_not_advice,
+        accept=_is_write,
         markdown="medium",
     ),
     _rule(
@@ -205,17 +302,25 @@ RULES: tuple[TextRule, ...] = (
         "instruction-override or concealment language",
         r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier|preceding)\s+(?:instructions|rules|guidance|prompts?)"
         r"|disregard\s+(?:all\s+|any\s+)?(?:previous|prior|above|your)\s+\w*\s*(?:instructions|rules|guidelines)"
-        r"|do\s+not\s+(?:tell|inform|mention|reveal|show|disclose|notify|alert|warn)\s+(?:this\s+to\s+)?(?:the\s+)?(?:user|human|operator)"
-        r"|don'?t\s+(?:tell|inform|mention|reveal|show|disclose|notify|warn)\s+(?:the\s+)?(?:user|human)"
+        r"|do\s+not\s+(?:tell|inform|mention|reveal|show|disclose|notify|alert|warn)\s+(?:the\s+)?(?:user|human|operator)\s+(?:about|that|this|it|what|anything|of|when|if|\.|$)"
+        r"|don'?t\s+(?:tell|inform|mention|reveal|show|disclose|notify|warn)\s+(?:the\s+)?(?:user|human)\s+(?:about|that|this|it|what|anything|of|when|if|\.|$)"
         r"|\b(?:run|execute|send|upload|post|proceed|continue|delete|install|do\s+(?:this|it|so))\b[^.\n]{0,60}"
         r"without\s+(?:telling|informing|asking|notifying|alerting|warning|consulting)\s+(?:the\s+)?(?:user|human)"
         r"|(?:hide|conceal|keep)\s+(?:this|it|these)\s+(?:from|hidden\s+from|secret\s+from)\s+(?:the\s+)?(?:user|human)"
-        r"|never\s+(?:mention|reveal|disclose)\b"
+        r"|never\s+(?:mention|reveal|disclose)\s+(?:this|these|that\s+you|the\s+(?:skill|instructions?|prompt|rule|hook|existence))"
         r"|new\s+system\s+prompt|\bsystem\s+prompt\s*:|\[system\]|<\s*system\s*>"
-        r"|(?:bypass|disable|skip|override)\s+(?:all\s+|any\s+|the\s+)?(?:permission|safety|security|guardrail|confirmation)s?\b"
-        r"|--dangerously-skip-permissions|\bbypassPermissions\b"
+        r"|(?:bypass|disable|override)\s+(?:all\s+|any\s+|the\s+)?(?:permission|safety|security|guardrail)s?\b"
         r"|pretend\s+(?:that\s+)?(?:you|this)\b|you\s+are\s+now\s+(?:in\s+)?\w*\s*(?:mode|DAN)\b",
         "markdown",
+        accept=_not_quoted_or_described,
+    ),
+    _rule(
+        "T-BYPASS-FLAG",
+        "medium",
+        "instructs running with permission prompts off",
+        r"\bclaude\b[^\n]*--dangerously-skip-permissions|\bbypassPermissions\b",
+        "markdown",
+        accept=_not_quoted_or_described,
     ),
     _rule(
         "T-COVERT",
@@ -255,7 +360,7 @@ RULES: tuple[TextRule, ...] = (
         "T-NETWORK",
         "info",
         "reaches the network",
-        r"\b(?:curl|wget|nc|ncat|ssh|scp|sftp|ftp|telnet|socat)\b|https?://",
+        r"(?<![.\w/-])(?:curl|wget|nc|ncat|ssh|scp|sftp|ftp|telnet|socat)\b|https?://",
         "shell",
     ),
 )
@@ -264,6 +369,9 @@ RULES: tuple[TextRule, ...] = (
 def scan_text(text: str, context: Context) -> Iterator[TextHit]:
     """Every rule hit in `text` for this context, at most once per rule per line."""
     seen: set[tuple[str, int]] = set()
+    if context == "shell":
+        # A comment line in a handler script never runs; keep the shebang line.
+        text = "\n".join("" if re.match(r"\s*(?:#(?!!)|//)", ln) else ln for ln in text.split("\n"))
     for rule in RULES:
         if context not in rule.contexts:
             continue
