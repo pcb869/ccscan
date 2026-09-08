@@ -179,7 +179,7 @@ def test_markdown_context_does_not_flag_plain_curl_mentions():
 def test_hidden_characters_and_sha_hashes():
     assert {h.rule.id for h in scan_text("visible\u200bhidden", "markdown")} == {"T-HIDDEN-TEXT"}
     assert {
-        h.rule.id for h in scan_text("هرگز اسرار یا اعتبارنامه\u200cها را", "markdown")
+        h.rule.id for h in scan_text("هرگز اسرار یا اعتبارنامه\u200cها را", "markdown")  # noqa: RUF001
     } == set()  # Persian ZWNJ
     assert {h.rule.id for h in scan_text("\ufeff# title", "markdown")} == set()  # BOM
     assert {h.rule.id for h in scan_text("end of sentence.\u200b\nnext", "markdown")} == {"T-HIDDEN-TEXT"}
